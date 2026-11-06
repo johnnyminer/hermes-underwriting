@@ -1,0 +1,35 @@
+{
+  "name": "1420 Grandview Ave",
+  "market": "Columbus, OH",
+  "property_type": "multifamily",
+  "price": 2950000,
+  "units": 24,
+  "year_built": 1972,
+  "tax_rate_pct": 1.2,
+  "income": {
+    "gross_potential_rent": 315360,
+    "occupancy_pct": 91.67,
+    "credit_loss_pct": 1.0,
+    "recoveries": 0,
+    "other_income": 9600,
+    "t12_noi": 188000
+  },
+  "opex": {
+    "taxes": 38400,
+    "insurance": 11200,
+    "utilities": 14800,
+    "repairs_maintenance": 19500,
+    "payroll": 8400,
+    "general_admin": 4100,
+    "management_pct_egi": 3.0
+  },
+  "debt": [
+    {
+      "name": "Bank 65%",
+      "ltv_pct": 65,
+      "rate_pct": 6.75,
+      "amort_years": 25
+    }
+  ],
+  "notes": "24 x 2BR/1BA, 22 occupied at $1,095. T-12 opex. Reserves excluded by seller."
+}

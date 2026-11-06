@@ -153,6 +153,7 @@ EXTRACT = {
             "path": {"type": "string", "description": "Local .txt/.md/.csv/.json/.pdf file to read"},
             "url": {"type": "string", "description": "Listing or document URL to fetch"},
             "property_type": {"type": "string", "description": "Used only when the document does not state it"},
+            "out_path": {"type": "string", "description": "Write the full result, provenance included, to this JSON file (audit trail)"},
         },
         "required": [],
     },

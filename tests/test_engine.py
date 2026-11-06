@@ -118,6 +118,22 @@ class EngineTest(unittest.TestCase):
         self.assertLess(t["sweet_spot"]["price"], DEAL["price"])
         self.assertEqual(t["sweet_spot"]["verdict"], "PASS")
 
+    def test_normalize_is_idempotent(self):
+        """Triage re-normalizes at every price; a lossy second pass silently empties the sweep."""
+        once = engine.normalize(DEAL)
+        twice = engine.normalize(once)
+        for key in ("gross_potential_rent", "occupancy_pct", "price", "units", "other_income",
+                    "recoveries", "credit_loss_pct", "vacancy_pct", "reserves"):
+            self.assertEqual(once[key], twice[key], f"{key} changed on the second normalize")
+        self.assertEqual(once["opex"], twice["opex"])
+        self.assertEqual(once["t12_noi_claim"], twice["t12_noi_claim"])
+
+    def test_triage_survives_a_pre_normalized_deal(self):
+        """Regression: triage built its steps from an already-normalized deal and produced none."""
+        t = engine.triage(engine.normalize(DEAL), steps=12)
+        self.assertEqual(len(t["steps"]), 12)
+        self.assertIsNotNone(t["sweet_spot"])
+
 
 class ReturnsTest(unittest.TestCase):
     def test_proforma_year_one_is_in_place_and_exit_is_forward_noi(self):

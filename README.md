@@ -68,7 +68,7 @@ Plus a `/underwrite` slash command (`/underwrite deal.json`, `/underwrite list`)
 ## Example
 
 ```bash
-python3 -m unittest discover -s tests      # 23 tests, no pytest needed
+python3 -m unittest discover -s tests      # 32 tests, no pytest needed
 hermes -z "Underwrite examples/bethel-office.json and tell me where the deal flips"
 ```
 
@@ -122,11 +122,29 @@ engine.py        NOI rebuild, tests, verdict, counter-price, triage, IRR/NPV pri
 returns.py       proforma, levered/unlevered IRR, exit, sensitivity grid
 memo.py          deterministic memo template
 assumptions.py   per-property-type defaults, explicitly labeled as defaults
-tests/           23 tests: hand-computed engine numbers + end-to-end tool calls
+tests/           32 tests: hand-computed engine numbers, tool calls, extraction audit
 ```
 
 The engine is pure arithmetic over a normalized deal dict. `screen()` is idempotent-safe, so
 triaging a deal re-prices the same income basis instead of re-deriving it.
+
+## The 90-second demo
+
+`demo/demo.py` prints the three arithmetic beats — the screen, the price sweep, and the reserve
+convention — with no model call, so it runs in under a second and looks the same every time.
+`demo/SCRIPT.md` is the shot list and narration for the video.
+
+```bash
+python3 demo/demo.py
+```
+
+## On extraction honesty
+
+`uw_extract` does not take the model's word for anything. Every number it returns is matched back
+against the document text: if the figure appears, the line is attached as its quote and marked
+`verified: true`. If the model cites the document for a number the document does not contain, that
+is reported as a warning — not quietly kept. Derived figures (rent × units × 12) are kept but
+labelled, and zeros are never treated as missing data.
 
 ## Limitations — read this
 

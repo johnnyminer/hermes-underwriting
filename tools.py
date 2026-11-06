@@ -122,18 +122,25 @@ EXTRACT_SCHEMA = {
 _EXTRACT_INSTRUCTIONS = """You are extracting deal facts from commercial real estate offering material.
 
 Rules, in priority order:
-1. Only extract what the document states. If a field is not stated, return null. Do NOT
-   estimate, infer, pro-rate or compute a field from other fields. A null is a useful answer
-   and an invented number is a data-integrity failure.
-2. Annual dollars unless the document labels otherwise. Convert monthly to annual only when the
-   document states the figure as monthly (say so in the quote).
-3. "t12_noi" is the seller's claim. Put it there even if you think it is wrong. Never put a
-   computed NOI there.
-4. For every field you fill, record the verbatim quote (max 200 chars) that supports it, and a
-   source label: om, rent_roll, t12, listing, or user.
-5. If the document gives a rent roll with per-tenant rents, sum to gross potential rent and say
-   so in the quote for gross_potential_rent (e.g. "sum of 14 tenant rows").
-6. Return ONLY JSON matching this shape:
+1. Only extract what the document states. If a field is not stated AND cannot be aggregated from
+   stated rows, return null. Do NOT estimate, assume a market norm, or pro-rate. A null is a
+   useful answer; an invented number is a data-integrity failure.
+2. Aggregation from stated rows is allowed and encouraged — it is not inference. If the document
+   gives a per-unit rent and a unit count, gross_potential_rent = rent x units x 12, labeled
+   "derived" with the arithmetic written out. Occupancy from occupied/total units is the same.
+   Anything you carry across from another document or from experience is forbidden.
+3. Annual dollars unless the document labels otherwise. If a figure is monthly, annualize it and
+   say so in the quote.
+4. "t12_noi" is the seller's claim verbatim. Put it there even if you think it is wrong. Never put
+   a computed NOI there.
+5. Return ONLY JSON with exactly two top-level keys: "deal" and "provenance".
+   - "deal" matches the schema below.
+   - "provenance" is an object keyed by dotted path ("price", "income.gross_potential_rent",
+     "opex.taxes"). EVERY non-null field in "deal" must have an entry:
+       {{"source": "om|rent_roll|t12|listing|derived", "quote": "verbatim text, max 200 chars"}}
+     For "derived", the quote is the arithmetic, e.g. "22 of 24 units x $1,095 x 12 = $315,360".
+   - A non-null field with no provenance entry is a failure. Do not emit it.
+6. Schema:
 {schema}
 
 JSON:"""
@@ -151,6 +158,81 @@ def _parse_json(text: str):
         if start >= 0 and end > start:
             return json.loads(t[start:end + 1])
         raise
+
+
+_NUM_LINE_MAX = 180
+
+
+def _flatten_numbers(deal, prefix=""):
+    """Every numeric leaf of a deal, keyed by dotted path."""
+    out = []
+    for key, value in (deal or {}).items():
+        path = f"{prefix}{key}"
+        if isinstance(value, dict):
+            out.extend(_flatten_numbers(value, prefix=f"{path}."))
+        elif isinstance(value, bool):
+            continue
+        elif isinstance(value, (int, float)):
+            out.append((path, value))
+    return out
+
+
+def _variants(value):
+    """The ways a document might write this number."""
+    forms = set()
+    for spec in (",.0f", ".0f", ",.2f", ".2f"):
+        try:
+            forms.add(format(value, spec))
+        except (ValueError, TypeError):
+            pass
+    forms.add(str(value))
+    return {f for f in forms if f}
+
+
+def _find_in_document(doc, value):
+    """Return the line of the document that states this number, or None.
+
+    Independent of anything the model claims: the document either contains the figure or it does
+    not. That is the whole point of verifying rather than trusting a quoted citation.
+    """
+    if not doc:
+        return None
+    for form in _variants(value):
+        pattern = r"(?<![\d.])" + re.escape(form) + r"(?![\d])"
+        match = re.search(pattern, doc)
+        if match:
+            start = doc.rfind("\n", 0, match.start()) + 1
+            end = doc.find("\n", match.end())
+            line = doc[start: end if end != -1 else len(doc)].strip()
+            return line[:_NUM_LINE_MAX]
+    return None
+
+
+def _verify_provenance(deal, doc, claimed):
+    """Attach a document line to every number, and audit the model's citations.
+
+    The model may supply quotes; none of them are taken on faith. A field the model marks as
+    coming from the document whose figure does not appear in the document is reported, not kept
+    quietly.
+    """
+    claimed = claimed or {}
+    provenance, warnings = {}, []
+    for path, value in _flatten_numbers(deal):
+        if value == 0:
+            continue
+        claim = claimed.get(path) or {}
+        line = _find_in_document(doc, value)
+        source = claim.get("source") or ("document" if line else "model")
+        provenance[path] = {"source": source, "verified": bool(line),
+                            "quote": line or claim.get("quote", "")}
+        if not line:
+            if claim.get("source") in ("om", "t12", "rent_roll", "listing"):
+                warnings.append(f"{path} is cited from the document but {value:,.0f} does not "
+                                f"appear in it - check this before it reaches the memo")
+            elif claim.get("source") != "derived":
+                warnings.append(f"{path} = {value:,.0f} is not stated in the document; it came "
+                                f"from the model, not the source")
+    return provenance, warnings
 
 
 def tool_extract(args: dict) -> str:
@@ -183,6 +265,7 @@ def tool_extract(args: dict) -> str:
         return _err("the model did not return JSON", raw=raw[:2000])
 
     deal = parsed.get("deal") or parsed
+    provenance, audit = _verify_provenance(deal, doc, parsed.get("provenance"))
     if args.get("property_type") and not deal.get("property_type"):
         deal["property_type"] = args["property_type"]
 
@@ -197,15 +280,33 @@ def tool_extract(args: dict) -> str:
         return found
 
     known = _known(deal)
-    return _out({
+    warnings = list(audit)
+    missing = [p for p, e in provenance.items() if not e["verified"]]
+    if missing:
+        warnings.append(f"{len(missing)} of {len(provenance)} numbers could not be matched to the "
+                        f"document text: " + ", ".join(missing[:8]))
+
+    payload = {
         "deal": deal,
-        "provenance": parsed.get("provenance") or {},
+        "provenance": provenance,
         "fields_extracted": len(known),
+        "fields_verified": sum(1 for e in provenance.values() if e["verified"]),
         "characters_read": len(doc),
         "truncated": len(doc) > 60_000,
+        "warnings": warnings,
         "next": "Run uw_screen with this deal. Anything null is a question for the broker, not a "
                 "gap to fill with an estimate.",
-    })
+    }
+
+    out_path = args.get("out_path")
+    if out_path:
+        p = os.path.expanduser(out_path)
+        os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, default=str)
+        payload["written_to"] = p
+
+    return _out(payload)
 
 
 # ---------------------------------------------------------------- screens
