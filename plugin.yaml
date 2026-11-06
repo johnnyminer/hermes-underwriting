@@ -1,0 +1,19 @@
+name: underwriting
+version: 0.1.0
+description: >-
+  Commercial real estate underwriting that shows its work: rebuilds NOI from the rent roll and
+  T-12 instead of trusting the broker's number, runs the buy-box tests with a DSCR-sized loan,
+  returns the counter-price at which a rejected deal actually clears, sweeps price to find where
+  a deal flips, models hold-period IRR, and refuses to invent a number it was not given.
+author: John Manner
+license: MIT
+homepage: https://github.com/johnnyminer/hermes-underwriting
+requires_hermes: ">=0.22.0"
+provides_tools:
+  - uw_screen
+  - uw_triage
+  - uw_returns
+  - uw_extract
+  - uw_memo
+  - uw_save
+  - uw_deals

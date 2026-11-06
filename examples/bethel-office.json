@@ -1,0 +1,39 @@
+{
+  "name": "Bethel Road Medical Office",
+  "market": "Columbus, OH",
+  "property_type": "office",
+  "price": 6200000,
+  "nra_sf": 24000,
+  "units": null,
+  "year_built": 1996,
+  "tax_rate_pct": 1.2,
+  "income": {
+    "gross_potential_rent": 540000,
+    "occupancy_pct": 84,
+    "credit_loss_pct": 2.0,
+    "recoveries": 92000,
+    "other_income": 12000,
+    "t12_noi": 402000
+  },
+  "opex": {
+    "taxes": 71000,
+    "insurance": 19000,
+    "utilities": 26000,
+    "repairs_maintenance": 31000,
+    "general_admin": 9000,
+    "other_opex": 5000,
+    "management_pct_egi": 3.0
+  },
+  "growth": {
+    "rent_pct": 3.0,
+    "expense_pct": 3.5,
+    "exit_cap_pct": 7.75,
+    "hold_years": 7
+  },
+  "debt": [
+    {"name": "Local bank 65%", "ltv_pct": 65, "rate_pct": 6.9, "amort_years": 25},
+    {"name": "Life co 55%", "ltv_pct": 55, "rate_pct": 6.1, "amort_years": 30},
+    {"name": "All cash", "ltv_pct": 0, "rate_pct": 0, "amort_years": 0}
+  ],
+  "notes": "Two tenants roll in 2027 (18% of NRA). Rollover is the real risk, not the cap rate."
+}
