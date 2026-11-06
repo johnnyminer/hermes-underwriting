@@ -63,7 +63,7 @@ hermes -z "uw_extract on examples/om-grandview.txt, then uw_screen the deal"
 
 *On screen:* scroll the memo, then the repo URL.
 
-> "Seven tools, a slash command, thirty-two tests, no dependencies, no network calls. The math is
+> "Seven tools, a slash command, thirty-two tests, no dependencies, no external APIs. The math is
 > code. The model only does language. Hermes underwriting — link below."
 
 ---
@@ -81,7 +81,7 @@ question a broker cares about" and the "first time that's happened" aside.
 > counter-price, sweep where the deal flips, model the hold. Returns `null` when the document
 > doesn't say — and checks every number against the line it came from.
 >
-> Pure stdlib. No network calls. 32 tests. @NousResearch
+> Pure stdlib. No external APIs. 32 tests. @NousResearch
 > github.com/johnnyminer/hermes-underwriting
 
 Tag `@NousResearch` in the post body, repo link in the same post, video under 90 seconds.
