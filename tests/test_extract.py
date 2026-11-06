@@ -148,6 +148,20 @@ class ExtractTest(unittest.TestCase):
         self.assertIn("error", out)
         self.assertIn("raw", out)
 
+    def test_relative_path_resolves_outside_the_working_directory(self):
+        import os
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.ctx.state.data_dir)
+            doc = self.tools["uw_extract"]({"path": "examples/om-grandview.txt"})
+            self.assertNotIn("error", json.loads(doc))
+        finally:
+            os.chdir(cwd)
+
+    def test_missing_document_names_where_it_looked(self):
+        out = json.loads(self.tools["uw_extract"]({"path": "examples/nope.txt"}))
+        self.assertIn("tried", out["error"])
+
     def test_missing_document_is_a_clean_error(self):
         out = json.loads(self.tools["uw_extract"]({"path": "/nonexistent/om.pdf"}))
         self.assertIn("could not read the document", out["error"])

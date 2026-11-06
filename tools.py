@@ -63,12 +63,33 @@ def _pdf_to_text(path: str) -> str:
                           timeout=120, check=True).stdout
 
 
+_PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def resolve_path(path: str) -> str:
+    """Find a document the caller named relatively.
+
+    A plugin does not run from the caller's directory - the host may be a long-lived gateway whose
+    cwd is the home directory - so a relative path is resolved against the cwd, the plugin root and
+    the home directory, in that order, and the failure names where it looked.
+    """
+    p = os.path.expanduser(path)
+    if os.path.isabs(p):
+        return p
+    tried = [os.path.join(os.getcwd(), p), os.path.join(_PLUGIN_ROOT, p),
+             os.path.join(os.path.expanduser("~"), p)]
+    for candidate in tried:
+        if os.path.exists(candidate):
+            return candidate
+    raise FileNotFoundError(f"no such file: {path} (tried {', '.join(dict.fromkeys(tried))})")
+
+
 def load_document(text: str | None = None, path: str | None = None, url: str | None = None) -> str:
     """Get plain text from whatever the caller has. No OCR: a scanned PDF is a real wall."""
     if text:
         return text
     if path:
-        p = os.path.expanduser(path)
+        p = resolve_path(path)
         ext = os.path.splitext(p)[1].lower()
         if ext == ".pdf":
             return _pdf_to_text(p)
