@@ -133,13 +133,18 @@ class ExtractTest(unittest.TestCase):
         self.assertNotIn("income.recoveries", out["provenance"])
 
     def test_writes_artifact_when_asked(self):
-        out_path = self.ctx.state.data_dir / "nested" / "extract.json"
-        out = json.loads(self.tools["uw_extract"]({"text": DOC, "out_path": str(out_path)}))
-        self.assertTrue(out_path.exists())
-        saved = json.loads(out_path.read_text())
+        out = json.loads(self.tools["uw_extract"]({"text": DOC, "out_path": "extract.json"}))
+        written = Path(out["written_to"])
+        self.assertTrue(written.exists())
+        self.assertEqual(written.parent, (self.ctx.state.data_dir / "exports").resolve())
+        saved = json.loads(written.read_text())
         self.assertEqual(saved["deal"]["units"], 24)
         self.assertIn("verified", saved["provenance"]["price"])
-        self.assertEqual(out["written_to"], str(out_path))
+
+    def test_refuses_to_write_outside_the_data_dir(self):
+        out = json.loads(self.tools["uw_extract"]({"text": DOC, "out_path": "../../.bashrc"}))
+        self.assertTrue(any("not written" in w for w in out["warnings"]))
+        self.assertNotIn("written_to", out)
 
     def test_non_json_model_reply_is_reported_not_crashed(self):
         plugin = load_plugin()

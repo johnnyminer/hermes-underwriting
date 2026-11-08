@@ -151,9 +151,9 @@ EXTRACT = {
         "properties": {
             "text": {"type": "string", "description": "Raw text pasted from the document"},
             "path": {"type": "string", "description": "Local .txt/.md/.csv/.json/.pdf file to read"},
-            "url": {"type": "string", "description": "Listing or document URL to fetch"},
+            "url": {"type": "string", "description": "Public http(s) URL of the listing or document. file://, loopback, LAN and cloud-metadata addresses are refused; each redirect hop is checked again."},
             "property_type": {"type": "string", "description": "Used only when the document does not state it"},
-            "out_path": {"type": "string", "description": "Write the full result, provenance included, to this JSON file (audit trail)"},
+            "out_path": {"type": "string", "description": "Bare filename for an audit-trail JSON, e.g. 'grandview-audit.json'. Written inside the plugin's own data directory; directories, absolute paths and .. are refused"},
         },
         "required": [],
     },
@@ -170,7 +170,7 @@ MEMO = {
         "properties": {
             "deal": DEAL_SCHEMA,
             "buy_box": BUY_BOX_SCHEMA,
-            "out_path": {"type": "string", "description": "Where to write the .md file; defaults to the plugin data dir"},
+            "out_path": {"type": "string", "description": "Bare filename for the .md file, e.g. 'grandview.md'. Written inside the plugin's own data directory; directories, absolute paths and .. are refused"},
         },
         "required": ["deal"],
     },

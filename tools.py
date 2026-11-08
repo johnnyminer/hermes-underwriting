@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
 import urllib.request
 from datetime import date
 
@@ -65,23 +66,151 @@ def _pdf_to_text(path: str) -> str:
 
 _PLUGIN_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+_MAX_FETCH_BYTES = 8 * 1024 * 1024
+_MAX_REDIRECTS = 3
+
+
+def _file_safety():
+    """Hermes' own read/write guards, when the host provides them."""
+    try:
+        from agent.file_safety import get_read_block_error, get_write_denied_error
+        return get_read_block_error, get_write_denied_error
+    except Exception:  # noqa: BLE001 - older hosts, or a flat import under unittest
+        return None, None
+
+
+def guard_read(path: str) -> str:
+    read_block, _ = _file_safety()
+    if read_block:
+        error = read_block(str(path))
+        if error:
+            raise PermissionError(error)
+    return path
+
+
+def guard_write(path: str) -> str:
+    _, write_denied = _file_safety()
+    if write_denied:
+        error = write_denied(str(path))
+        if error:
+            raise PermissionError(error)
+    return path
+
+
+def export_dir() -> str:
+    """Where this plugin is allowed to write: its own data directory, nothing else."""
+    ctx = _ctx()
+    base = getattr(getattr(ctx, "state", None), "data_dir", None) or \
+        os.path.expanduser("~/.hermes/plugin-data/underwriting")
+    return os.path.join(str(base), "exports")
+
+
+def resolve_output(name: str | None, default_name: str | None = None) -> str:
+    """Turn a caller-supplied name into a path inside the plugin's own data directory.
+
+    The model may choose the filename, not the destination. A document is untrusted input, so a
+    document that says "write the audit trail to ~/.bashrc" must not be able to steer a write onto
+    a shell rc file, the Hermes config, or an env file.
+    """
+    name = (name or default_name or "").strip()
+    if not name:
+        raise ValueError("no output filename")
+    if os.path.basename(name) != name or name in (".", "..") or os.sep in name or "\\" in name:
+        raise ValueError(f"out_path must be a bare filename, not a path: {name!r}. "
+                         f"Pass something like 'audit.json' - it lands in the plugin's own "
+                         f"data directory.")
+    root = os.path.realpath(export_dir())
+    target = os.path.realpath(os.path.join(root, name))
+    if os.path.dirname(target) != root:
+        raise ValueError(f"refusing to write outside {root}: {name!r}")
+    os.makedirs(root, exist_ok=True)
+    return guard_write(target)
+
 
 def resolve_path(path: str) -> str:
     """Find a document the caller named relatively.
 
     A plugin does not run from the caller's directory - the host may be a long-lived gateway whose
-    cwd is the home directory - so a relative path is resolved against the cwd, the plugin root and
-    the home directory, in that order, and the failure names where it looked.
+    cwd is the home directory - so a relative path is resolved against the cwd and then the plugin
+    root. The failure names where it looked. There is deliberately no $HOME fallback: reading the
+    home directory on behalf of a model-supplied path is how a document gets to pick its own target.
     """
     p = os.path.expanduser(path)
     if os.path.isabs(p):
-        return p
-    tried = [os.path.join(os.getcwd(), p), os.path.join(_PLUGIN_ROOT, p),
-             os.path.join(os.path.expanduser("~"), p)]
+        return guard_read(p)
+    tried = [os.path.join(os.getcwd(), p), os.path.join(_PLUGIN_ROOT, p)]
     for candidate in tried:
         if os.path.exists(candidate):
-            return candidate
+            return guard_read(candidate)
     raise FileNotFoundError(f"no such file: {path} (tried {', '.join(dict.fromkeys(tried))})")
+
+
+def assert_public_url(url: str) -> str:
+    """http(s) only, and only to public addresses.
+
+    A bare `urlopen` will happily read `file:///etc/passwd`, hop to 127.0.0.1, sweep the LAN, or
+    reach a cloud metadata endpoint. Since the URL can come out of a document the model just read,
+    every hop has to be checked.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"only http and https URLs can be fetched, not "
+                         f"{parts.scheme or 'a bare path'!r}")
+    host = parts.hostname
+    if not host:
+        raise ValueError(f"no host in URL: {url!r}")
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"cannot resolve {host}: {exc}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            raise ValueError(f"refusing to fetch {url}: {host} resolves to the non-public "
+                             f"address {ip}")
+    return url
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface redirects as HTTPError so each hop can be re-checked before it is followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+def fetch_url(url: str) -> tuple[bytes, str, str]:
+    """Fetch http(s) only: scheme and address checked on every hop, size capped."""
+    from urllib.parse import urljoin
+
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        assert_public_url(current)
+        req = urllib.request.Request(current, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; hermes-underwriting/1.0)",
+            "Accept": "text/html,application/pdf,text/plain,*/*",
+        })
+        try:
+            with urllib.request.build_opener(_NoRedirect).open(req, timeout=30) as resp:
+                raw = resp.read(_MAX_FETCH_BYTES + 1)
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+        except urllib.error.HTTPError as exc:
+            if exc.code in (301, 302, 303, 307, 308):
+                location = exc.headers.get("Location")
+                if not location:
+                    raise ValueError(f"redirect with no Location from {current}") from exc
+                current = urljoin(current, location)
+                continue
+            raise
+        if len(raw) > _MAX_FETCH_BYTES:
+            raise ValueError(f"document is larger than {_MAX_FETCH_BYTES // (1024 * 1024)} MB")
+        return raw, ctype, current
+    raise ValueError(f"more than {_MAX_REDIRECTS} redirects fetching {url}")
 
 
 def load_document(text: str | None = None, path: str | None = None, url: str | None = None) -> str:
@@ -96,14 +225,8 @@ def load_document(text: str | None = None, path: str | None = None, url: str | N
         with open(p, encoding="utf-8", errors="replace") as handle:
             return handle.read()
     if url:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; hermes-underwriting/1.0)",
-            "Accept": "text/html,application/pdf,text/plain,*/*",
-        })
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-            ctype = (resp.headers.get("Content-Type") or "").lower()
-        if "pdf" in ctype or url.lower().endswith(".pdf"):
+        raw, ctype, final_url = fetch_url(url)
+        if "pdf" in ctype or final_url.lower().endswith(".pdf"):
             import tempfile
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                 tmp.write(raw)
@@ -321,11 +444,14 @@ def tool_extract(args: dict) -> str:
 
     out_path = args.get("out_path")
     if out_path:
-        p = os.path.expanduser(out_path)
-        os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, default=str)
-        payload["written_to"] = p
+        try:
+            target = resolve_output(out_path, f"extract-{_slug(deal.get('name'))}.json")
+        except (ValueError, PermissionError) as exc:
+            payload["warnings"].append(f"not written: {exc}")
+        else:
+            with open(target, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, default=str)
+            payload["written_to"] = target
 
     return _out(payload)
 
@@ -373,15 +499,11 @@ def tool_memo(args: dict) -> str:
         deal = _deal_from(args)
         result = engine.screen(deal, args.get("buy_box"))
         text = memo.build_memo(result)
-        out_path = args.get("out_path")
-        if not out_path:
-            ctx = _ctx()
-            base = ctx.state.data_dir if ctx else os.path.expanduser("~/.hermes/plugin-data/underwriting")
-            out_path = os.path.join(str(base), f"memo-{_slug(result.get('deal'))}-{date.today():%Y%m%d}.md")
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as handle:
+        out_name = args.get("out_path")
+        target = resolve_output(out_name, f"memo-{_slug(result.get('deal'))}-{date.today():%Y%m%d}.md")
+        with open(target, "w", encoding="utf-8") as handle:
             handle.write(text)
-        return _out({"memo": out_path, "verdict": result.get("verdict"),
+        return _out({"memo": target, "verdict": result.get("verdict"),
                      "bytes": len(text), "memo_text": text if len(text) < 8000 else text[:8000] + "\n…"})
     except Exception as exc:  # noqa: BLE001
         return _err(f"memo failed: {type(exc).__name__}: {exc}")

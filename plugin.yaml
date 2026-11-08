@@ -1,5 +1,5 @@
 name: underwriting
-version: 0.1.0
+version: 0.1.1
 description: >-
   Commercial real estate underwriting that shows its work: rebuilds NOI from the rent roll and
   T-12 instead of trusting the broker's number, runs the buy-box tests with a DSCR-sized loan,
